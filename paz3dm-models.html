@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="icon" href="data:;base64,=">
+        <title>rhino3dm: Loading multiple files with 3dmLoader</title>
+        <style>
+            body { margin: 0; }
+            
+            /* CSS for a spinning animation */ 
+			#spinloader {
+                border: 5px solid #f3f3f3; /* Light grey */
+                border-top: 5px solid #3d3d3d; /* Grey */
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                animation: spin 1s linear infinite;
+                position: absolute;
+                top: 50%;
+                left: 50%;
+            }
+
+            #container {position: relative;padding-top:1em;}
+            #overlay {z-index: 1; width: 100%}
+
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        </style>
+    </head>
+    <body>
+        <div id="spinloader"></div>
+        <div id="container">
+            <div id="overlay">
+                <label for="file-select" style="color:#fff; font-family:sans-serif;padding:0 2em">Choose a 3dm Model:</label>
+                <select name="files" id="file-select" style="background:#000; color:#fff; padding:2px 5px;">
+                    <option value="PAZ-ACADEMY.3dm">PAZ-ACADEMY</option>
+                    <option value="hello_mesh.3dm">Rhino</option>
+                    <option value="PAZ_MATTERHORN-2.3dm">PAZ_MATTERHORN</option>
+                </select>
+            </div>
+            <br>
+        </div>
+        
+
+        <script type="module">
+            // Import libraries
+            import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.126.0/build/three.module.js'
+            import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/jsm/controls/OrbitControls.js'
+            import { Rhino3dmLoader } from 'https://cdn.jsdelivr.net/npm/three@0.126.0/examples/jsm/loaders/3DMLoader.js'
+            //import { GUI } from './dat.gui.module.js'; 
+            import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.9/build/dat.gui.module.js'
+
+            const select = document.getElementById( 'file-select' )
+            select.onchange = load
+
+            let model = 'hello_mesh.3dm'
+
+            const loader = new Rhino3dmLoader()
+            loader.setLibraryPath( 'https://cdn.jsdelivr.net/npm/rhino3dm@0.15.0-beta/' );
+
+            const material = new THREE.MeshNormalMaterial({wireframe: false})
+            //const material = new THREE.MeshBasicMaterial({color: 0x005500, wireframe: false});
+
+            // BOILERPLATE //
+            let scene, camera, renderer, rhinoObject, mesh, gui;
+
+            init()
+            load()
+
+            function load() {
+                document.getElementById( 'spinloader' ).style.display = 'block'
+
+                if ( model === select.value  && rhinoObject !== undefined ) return;    // don't load what's already loaded
+                if ( select.value.includes( '.3dm' ) ) { model = select.value }     //handle case when the selection isn't related to a 3dm file
+
+                // load model
+                loader.load( model, function ( object ) {
+                    // clear scene
+                    scene.traverse( child => {
+                        if ( child.userData.hasOwnProperty( 'objectType' ) && child.userData.objectType === 'File3dm' ) {
+                        scene.remove( child )
+                        }
+                    } )
+
+                    object.traverse( child => { child.material = material })
+                    scene.add( object )
+                } )
+                // hide spinner
+                document.getElementById( 'spinloader' ).style.display = 'none'
+
+                // Load a 3DM file
+                mesh = loader.load(
+                    // resource URL
+                    model,
+                    // called when the resource is loaded
+                    function ( object ) {
+                        object.traverse( child => {child.material = material})
+                        scene.add( object );
+                        initGUI( object.userData.layers );
+                    },
+                    // called as loading progresses
+                    function ( xhr ) { console.log( ( xhr.loaded / xhr.total * 100 ) + '% loaded' ); },
+                    // called when loading has errors
+                    function ( error ) { console.log( 'An error happened' ); }
+                );
+
+            }
+
+            function init() {
+
+                THREE.Object3D.DefaultUp = new THREE.Vector3(0,0,1)
+
+                scene = new THREE.Scene()
+                scene.background = new THREE.Color('#000000')
+                camera = new THREE.PerspectiveCamera( 45, window.innerWidth/window.innerHeight, 1, 1000 )
+                camera.position.set(26,-40,5)
+
+                // add a directional light
+                const directionalLight = new THREE.DirectionalLight(0xffffff)
+                directionalLight.intensity = 2
+                scene.add(directionalLight)
+
+                const ambientLight = new THREE.AmbientLight()
+                scene.add(ambientLight)
+
+                renderer = new THREE.WebGLRenderer({antialias: true})
+                renderer.setPixelRatio( window.devicePixelRatio )
+                renderer.setSize( window.innerWidth, window.innerHeight )
+                document.body.appendChild( renderer.domElement )
+                const controls = new OrbitControls( camera, renderer.domElement )
+
+                window.addEventListener( 'resize', onWindowResize, false )
+
+                gui = new GUI( { width: 200 } );
+                
+                animate()
+            }
+
+            function animate () {
+                requestAnimationFrame( animate )
+                renderer.render( scene, camera )
+            }
+
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight
+                camera.updateProjectionMatrix()
+                renderer.setSize( window.innerWidth, window.innerHeight )
+                animate()
+            }
+
+            function initGUI( layers ) {
+                gui.destroy()
+                gui = new GUI( { width: 200 } );
+                const layersControl = gui.addFolder( 'Model Controls' );
+                layersControl.open();
+                for ( let i = 0; i < layers.length; i ++ ) {
+                    const layer = layers[ i ];
+                    layersControl.add( layer, 'visible' ).name( layer.name ).onChange( function ( val ) {
+                        const name = this.object.name;
+                        scene.traverse( function ( child ) {
+                            if ( child.userData.hasOwnProperty( 'attributes' ) ) {
+                                if ( 'layerIndex' in child.userData.attributes ) {
+                                    const layerName = layers[ child.userData.attributes.layerIndex ].name;
+                                    if ( layerName === name ) {
+                                        child.visible = val;
+                                        layer.visible = val;
+                                    }
+                                }
+                            }
+                        } );
+                    } );
+                }
+                layersControl.updateDisplay()
+                var guicontrols = new function() {
+                    this.bkcolor = "#"+ scene.background.getHexString();
+                    this.wireframe = (material.wireframe) ? true: false;
+                }
+                let bkcolor = gui.addColor(guicontrols, 'bkcolor').name("Scene color").onChange(function(value) { scene.background.set( value ); bkcolor.updateDisplay()});
+                let wireframe = gui.add(guicontrols, "wireframe").name("Frame").onChange(function(value) { material.wireframe = value ; load();});
+            }
+
+        </script>
+
+
+    </body>
+</html>
